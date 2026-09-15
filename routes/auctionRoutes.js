@@ -6,8 +6,7 @@ const Auction = require("../models/Auction");
 
 const router = express.Router();
 
-const Player =
-  mongoose.models.Player;
+const Player = require("../models/Player");
 
 const MIN_BID_INCREMENT =
   1000000;
@@ -621,12 +620,7 @@ router.post(
     req,
     res
   ) => {
-    const session =
-      await mongoose.startSession();
-
     try {
-      session.startTransaction();
-
       const {
         teamId,
         finalPrice
@@ -658,9 +652,7 @@ router.post(
         await Auction.findOne({
           status:
             "Live"
-        }).session(
-          session
-        );
+        });
 
       if (!auction) {
         throw new Error(
@@ -679,15 +671,11 @@ router.post(
       const team =
         await Team.findById(
           teamId
-        ).session(
-          session
         );
 
       const player =
         await Player.findById(
           auction.currentPlayer
-        ).session(
-          session
         );
 
       if (!team) {
@@ -861,19 +849,9 @@ router.post(
         });
       }
 
-      await team.save({
-        session
-      });
-
-      await player.save({
-        session
-      });
-
-      await auction.save({
-        session
-      });
-
-      await session.commitTransaction();
+      await team.save();
+      await player.save();
+      await auction.save();
 
       const updatedAuction =
         await Auction.findById(
@@ -959,10 +937,6 @@ router.post(
         req
       );
     } catch (error) {
-      try {
-        await session.abortTransaction();
-      } catch {}
-
       console.error(
         "Manual sell error:",
         error
@@ -977,8 +951,6 @@ router.post(
             error.message ||
             "Failed to sell player."
         });
-    } finally {
-      session.endSession();
     }
   }
 );
@@ -995,19 +967,12 @@ router.post(
     req,
     res
   ) => {
-    const session =
-      await mongoose.startSession();
-
     try {
-      session.startTransaction();
-
       const auction =
         await Auction.findOne({
           status:
             "Live"
-        }).session(
-          session
-        );
+        });
 
       if (!auction) {
         throw new Error(
@@ -1026,8 +991,6 @@ router.post(
       const player =
         await Player.findById(
           auction.currentPlayer
-        ).session(
-          session
         );
 
       if (!player) {
@@ -1097,15 +1060,8 @@ router.post(
         });
       }
 
-      await player.save({
-        session
-      });
-
-      await auction.save({
-        session
-      });
-
-      await session.commitTransaction();
+      await player.save();
+      await auction.save();
 
       const updatedAuction =
         await Auction.findById(
@@ -1151,10 +1107,6 @@ router.post(
         req
       );
     } catch (error) {
-      try {
-        await session.abortTransaction();
-      } catch {}
-
       console.error(
         "Unsold player error:",
         error
@@ -1169,8 +1121,6 @@ router.post(
             error.message ||
             "Failed to mark player unsold."
         });
-    } finally {
-      session.endSession();
     }
   }
 );

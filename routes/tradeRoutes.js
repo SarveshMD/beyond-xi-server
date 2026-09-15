@@ -968,9 +968,6 @@ router.post(
 router.post(
   "/request/:id/accept",
   async (req, res) => {
-    const session =
-      await mongoose.startSession();
-
     try {
       const settings =
         await updateExpiredTrade(
@@ -987,18 +984,12 @@ router.post(
         });
       }
 
-      session.startTransaction();
-
       const request =
         await TradeRequest.findById(
           req.params.id
-        ).session(
-          session
         );
 
       if (!request) {
-        await session.abortTransaction();
-
         return res.status(404).json({
           message:
             "Trade request not found."
@@ -1009,8 +1000,6 @@ router.post(
         request.status !==
         "Pending"
       ) {
-        await session.abortTransaction();
-
         return res.status(400).json({
           message:
             "This trade request is no longer pending."
@@ -1020,23 +1009,17 @@ router.post(
       const fromTeam =
         await Team.findById(
           request.fromTeam
-        ).session(
-          session
         );
 
       const toTeam =
         await Team.findById(
           request.toTeam
-        ).session(
-          session
         );
 
       if (
         !fromTeam ||
         !toTeam
       ) {
-        await session.abortTransaction();
-
         return res.status(404).json({
           message:
             "One or both teams no longer exist."
@@ -1087,8 +1070,6 @@ router.post(
         !fromOwns ||
         !toOwns
       ) {
-        await session.abortTransaction();
-
         return res.status(400).json({
           message:
             "One of the players is no longer available for this trade."
@@ -1098,23 +1079,17 @@ router.post(
       const offeredPlayer =
         await Player.findById(
           request.offeredPlayer
-        ).session(
-          session
         );
 
       const requestedPlayer =
         await Player.findById(
           request.requestedPlayer
-        ).session(
-          session
         );
 
       if (
         !offeredPlayer ||
         !requestedPlayer
       ) {
-        await session.abortTransaction();
-
         return res.status(404).json({
           message:
             "One or both players no longer exist."
@@ -1152,9 +1127,6 @@ router.post(
         })
           .select(
             "position"
-          )
-          .session(
-            session
           );
 
       const playerById =
@@ -1251,8 +1223,6 @@ router.post(
         toFailures.length >
           0
       ) {
-        await session.abortTransaction();
-
         const fromMessage =
           fromFailures.length >
           0
@@ -1322,8 +1292,6 @@ router.post(
           ) <
           amountToPay
         ) {
-          await session.abortTransaction();
-
           return res.status(400).json({
             message:
               `Trade rejected. ${fromTeam.username} does not have enough purse. Required: €${amountToPay.toLocaleString(
@@ -1378,8 +1346,6 @@ router.post(
           ) <
           amountToPay
         ) {
-          await session.abortTransaction();
-
           return res.status(400).json({
             message:
               `Trade rejected. ${toTeam.username} does not have enough purse. Required: €${amountToPay.toLocaleString(
@@ -1512,13 +1478,9 @@ router.post(
       // SAVE BOTH TEAMS
       // =====================================================
 
-      await fromTeam.save({
-        session
-      });
+      await fromTeam.save();
 
-      await toTeam.save({
-        session
-      });
+      await toTeam.save();
 
       // =====================================================
       // ACCEPT REQUEST
@@ -1530,9 +1492,7 @@ router.post(
       request.respondedAt =
         new Date();
 
-      await request.save({
-        session
-      });
+      await request.save();
 
       // =====================================================
       // CANCEL CONFLICTING REQUESTS
@@ -1578,17 +1538,8 @@ router.post(
             respondedAt:
               new Date()
           }
-        },
-        {
-          session
         }
       );
-
-      // =====================================================
-      // COMMIT
-      // =====================================================
-
-      await session.commitTransaction();
 
       // =====================================================
       // UPDATED TEAMS
@@ -1691,8 +1642,10 @@ router.post(
               requestedValue
           },
 
-          purseDifference:
-            amountTransferred,
+          difference:
+            purseDifference,
+
+          amountTransferred,
 
           payer:
             payerTeam,
@@ -1709,10 +1662,6 @@ router.post(
           null
       });
     } catch (error) {
-      try {
-        await session.abortTransaction();
-      } catch {}
-
       console.error(
         "Accept trade error:",
         error
@@ -1723,8 +1672,6 @@ router.post(
           error.message ||
           "Failed to complete trade."
       });
-    } finally {
-      await session.endSession();
     }
   }
 );
