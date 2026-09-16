@@ -190,6 +190,45 @@ const allowedImageExtensions = [
 ];
 
 /* =========================================================
+   CLEAN PRICE / POSITION / CATEGORY HELPERS
+========================================================= */
+
+function cleanPrice(val) {
+  if (typeof val === "number" && Number.isFinite(val)) return val;
+  if (!val && val !== 0) return 0;
+  const str = String(val).trim().toUpperCase();
+  if (str.endsWith("M")) {
+    const num = Number(str.slice(0, -1).replace(/[€$,\s]/g, ""));
+    return Number.isFinite(num) ? num * 1000000 : 0;
+  }
+  if (str.endsWith("K")) {
+    const num = Number(str.slice(0, -1).replace(/[€$,\s]/g, ""));
+    return Number.isFinite(num) ? num * 1000 : 0;
+  }
+  const cleaned = str.replace(/[€$,\s]/g, "");
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function normalizePosition(val) {
+  const s = String(val || "").trim().toLowerCase();
+  if (s === "goalkeeper" || s === "gk") return "Goalkeeper";
+  if (s === "defender" || s === "def" || s === "cb" || s === "lb" || s === "rb") return "Defender";
+  if (s === "midfielder" || s === "mid" || s === "cm" || s === "cdm" || s === "cam" || s === "lm" || s === "rm") return "Midfielder";
+  if (s === "forward" || s === "fwd" || s === "st" || s === "cf" || s === "lw" || s === "rw" || s === "attacker" || s === "attack") return "Forward";
+  return String(val || "").trim();
+}
+
+function normalizeCategory(val) {
+  const s = String(val || "").trim().toLowerCase();
+  if (s === "elite") return "Elite";
+  if (s === "world class" || s === "worldclass") return "World Class";
+  if (s === "high quality" || s === "highquality") return "High Quality";
+  if (s === "rising/value" || s === "rising value" || s === "rising" || s === "value") return "Rising/Value";
+  return String(val || "").trim();
+}
+
+/* =========================================================
    NORMALIZE EXCEL ROW
 
    Supported auction order columns:
@@ -247,6 +286,8 @@ function normalizeRow(
     name: String(
       row.Name ??
       row.name ??
+      row.Player ??
+      row.player ??
       ""
     ).trim(),
 
@@ -260,37 +301,54 @@ function normalizeRow(
     nationality: String(
       row.Nationality ??
       row.nationality ??
+      row.Nation ??
+      row.nation ??
+      row.Country ??
+      row.country ??
       ""
     ).trim(),
 
-    position: String(
+    position: normalizePosition(
       row.Position ??
       row.position ??
+      row.Pos ??
+      row.pos ??
       ""
-    ).trim(),
+    ),
 
-    category: String(
+    category: normalizeCategory(
       row.Category ??
       row.category ??
+      row.Tier ??
+      row.tier ??
       ""
-    ).trim(),
+    ),
 
     rating:
       Number(
         row.Rating ??
-        row.rating
+        row.rating ??
+        row.Overall ??
+        row.overall ??
+        row.Ovr ??
+        row.ovr
       ),
 
-    basePrice:
-      Number(
-        row.BasePrice ??
-        row["Base Price"] ??
-        row.basePrice
-      ),
+    basePrice: cleanPrice(
+      row.BasePrice ??
+      row["Base Price"] ??
+      row["Base price"] ??
+      row.basePrice ??
+      row.Price ??
+      row.price ??
+      row.base_price
+    ),
 
     image: String(
       row.Image ??
       row.image ??
+      row.ImageFile ??
+      row.imageFile ??
       ""
     ).trim()
   };
@@ -718,15 +776,110 @@ function parseImportFile(
     );
   }
 
-  return XLSX.utils.sheet_to_json(
+  const sheet =
     workbook.Sheets[
       sheetName
-    ],
-    {
-      defval:
-        ""
-    }
+    ];
+
+  const rawArray =
+    XLSX.utils.sheet_to_json(
+      sheet,
+      {
+        header: 1,
+        defval: ""
+      }
+    );
+
+  if (
+    rawArray.length === 0
+  ) {
+    return [];
+  }
+
+  const firstRow =
+    rawArray[0] || [];
+
+  const firstColStr =
+    String(
+      firstRow[0] || ""
+    )
+      .trim()
+      .toLowerCase();
+
+  const isHeaderRow = [
+    "name",
+    "player",
+    "player name",
+    "playername",
+    "rating",
+    "order",
+    "auction order"
+  ].includes(
+    firstColStr
   );
+
+  if (isHeaderRow) {
+    return XLSX.utils.sheet_to_json(
+      sheet,
+      {
+        defval: ""
+      }
+    );
+  }
+
+  // Headerless Excel: detect column layout
+  // Column 0: Name, 1: Position, 2: Category, 3: Rating, 4: Base Price, 5: Nationality, 6: Image, 7: Status, 8: Sold
+  return rawArray
+    .map(
+      (row, index) => {
+        if (
+          !row ||
+          row.length === 0 ||
+          !row[0]
+        ) {
+          return null;
+        }
+
+        return {
+          auctionOrder:
+            index + 1,
+
+          name: String(
+            row[0] || ""
+          ).trim(),
+
+          position:
+            normalizePosition(
+              row[1] || ""
+            ),
+
+          category:
+            normalizeCategory(
+              row[2] || ""
+            ),
+
+          rating:
+            Number(
+              row[3]
+            ),
+
+          basePrice:
+            cleanPrice(
+              row[4]
+            ),
+
+          nationality:
+            String(
+              row[5] || ""
+            ).trim(),
+
+          image: String(
+            row[6] || ""
+          ).trim()
+        };
+      }
+    )
+    .filter(Boolean);
 }
 
 /* =========================================================
