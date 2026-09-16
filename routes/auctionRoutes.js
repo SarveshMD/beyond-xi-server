@@ -17,6 +17,92 @@ const MIN_SQUAD_SIZE =
 const MAX_SQUAD_SIZE =
   15;
 
+const MIN_POSITION_REQUIREMENTS = {
+  Goalkeeper: 1,
+  Defender: 3,
+  Midfielder: 3,
+  Forward: 2
+};
+
+function getPositionCounts(players) {
+  const counts = {
+    Goalkeeper: 0,
+    Defender: 0,
+    Midfielder: 0,
+    Forward: 0
+  };
+
+  for (const player of players) {
+    if (
+      player &&
+      Object.prototype.hasOwnProperty.call(
+        counts,
+        player.position
+      )
+    ) {
+      counts[player.position] += 1;
+    }
+  }
+
+  return counts;
+}
+
+function checkSquadRules(players) {
+  const failures = [];
+
+  const total =
+    Array.isArray(players)
+      ? players.length
+      : 0;
+
+  const counts =
+    getPositionCounts(
+      players || []
+    );
+
+  if (
+    total < MIN_SQUAD_SIZE
+  ) {
+    failures.push(
+      `Squad has only ${total} players (minimum ${MIN_SQUAD_SIZE})`
+    );
+  }
+
+  if (
+    total > MAX_SQUAD_SIZE
+  ) {
+    failures.push(
+      `Squad has ${total} players (maximum ${MAX_SQUAD_SIZE})`
+    );
+  }
+
+  for (
+    const [
+      position,
+      minimum
+    ] of Object.entries(
+      MIN_POSITION_REQUIREMENTS
+    )
+  ) {
+    if (
+      counts[position] <
+      minimum
+    ) {
+      failures.push(
+        `${position} minimum is ${minimum} (has ${counts[position]})`
+      );
+    }
+  }
+
+  return {
+    valid:
+      failures.length === 0,
+    failures,
+    total,
+    counts
+  };
+}
+
 /* =========================================================
    BROADCAST COMPLETE AUCTION STATE
 ========================================================= */
@@ -95,10 +181,7 @@ async function broadcastAuctionState(
         );
 
     const teams =
-      await Team.find({
-        isActive:
-          true
-      })
+      await Team.find({})
         .select(
           "username purse club players isActive bestXI"
         )
@@ -1125,6 +1208,177 @@ router.post(
   }
 );
 
+async function executeAuctionCompletion(
+  auction,
+  req
+) {
+  const activeTeams =
+    await Team.find({
+      isActive:
+        true
+    }).populate({
+      path:
+        "players",
+      select:
+        "name position category rating basePrice soldPrice"
+    });
+
+  const eliminatedTeams =
+    [];
+
+  const validTeams =
+    [];
+
+  for (const team of activeTeams) {
+    const squad =
+      Array.isArray(
+        team.players
+      )
+        ? team.players
+        : [];
+
+    const squadCheck =
+      checkSquadRules(
+        squad
+      );
+
+    if (
+      !squadCheck.valid
+    ) {
+      team.isActive =
+        false;
+
+      await team.save();
+
+      eliminatedTeams.push({
+        teamId:
+          team._id,
+
+        username:
+          team.username,
+
+        failures:
+          squadCheck.failures
+      });
+    } else {
+      validTeams.push(
+        team
+      );
+    }
+  }
+
+  // If there is an unresolved current player, mark as Unsold
+  if (
+    auction.currentPlayer
+  ) {
+    const player =
+      await Player.findById(
+        auction.currentPlayer
+      );
+
+    if (
+      player &&
+      player.status !==
+        "Sold"
+    ) {
+      player.status =
+        "Unsold";
+
+      player.activeForAuction =
+        false;
+
+      player.soldTo =
+        null;
+
+      player.soldPrice =
+        null;
+
+      await player.save();
+
+      const alreadyRecorded =
+        auction.results.some(
+          (r) =>
+            r.player &&
+            String(
+              r.player
+            ) ===
+              String(
+                player._id
+              )
+        );
+
+      if (
+        !alreadyRecorded
+      ) {
+        auction.results.push({
+          player:
+            player._id,
+
+          result:
+            "Unsold",
+
+          team:
+            null,
+
+          amount:
+            0,
+
+          completedAt:
+            new Date()
+        });
+      }
+    }
+  }
+
+  auction.status =
+    "Completed";
+
+  auction.currentPlayer =
+    null;
+
+  auction.highestBidder =
+    null;
+
+  auction.currentBid =
+    0;
+
+  auction.currentPlayerIndex =
+    auction.playerPool
+      ? auction.playerPool.length
+      : 0;
+
+  auction.completedAt =
+    new Date();
+
+  auction.bids =
+    [];
+
+  await auction.save();
+
+  const message =
+    eliminatedTeams.length >
+    0
+      ? `Auction completed. ${eliminatedTeams.length} team(s) did not satisfy squad rules and were directly eliminated: ${eliminatedTeams
+          .map(
+            (t) =>
+              `${t.username} (${t.failures.join(", ")})`
+          )
+          .join(" | ")}`
+      : "Auction completed successfully. All active teams satisfied squad rules.";
+
+  await broadcastAuctionState(
+    req
+  );
+
+  return {
+    message,
+
+    auction,
+
+    eliminatedTeams
+  };
+}
+
 /* =========================================================
    NEXT PLAYER
 
@@ -1192,9 +1446,9 @@ router.post(
             String(
               result.player
             ) ===
-            String(
-              currentPlayerId
-            )
+              String(
+                currentPlayerId
+              )
         );
 
       if (
@@ -1227,108 +1481,15 @@ router.post(
         nextIndex >=
         auction.playerPool.length
       ) {
-        const activeTeams =
-          await Team.find({
-            isActive:
-              true
-          }).select(
-            "username players"
+        const result =
+          await executeAuctionCompletion(
+            auction,
+            req
           );
 
-        const invalidTeams =
-          activeTeams.filter(
-            (
-              team
-            ) => {
-              const count =
-                Array.isArray(
-                  team.players
-                )
-                  ? team
-                      .players
-                      .length
-                  : 0;
-
-              return (
-                count <
-                  MIN_SQUAD_SIZE ||
-                count >
-                  MAX_SQUAD_SIZE
-              );
-            }
-          );
-
-        if (
-          invalidTeams.length >
-          0
-        ) {
-          const details =
-            invalidTeams
-              .map(
-                (
-                  team
-                ) => {
-                  const count =
-                    Array.isArray(
-                      team.players
-                    )
-                      ? team
-                          .players
-                          .length
-                      : 0;
-
-                  return `${team.username}: ${count}/${MAX_SQUAD_SIZE}`;
-                }
-              )
-              .join(
-                " | "
-              );
-
-          return res
-            .status(
-              400
-            )
-            .json({
-              message:
-                `Auction cannot be completed. Every active team must have ${MIN_SQUAD_SIZE}-${MAX_SQUAD_SIZE} players. ${details}`
-            });
-        }
-
-        auction.status =
-          "Completed";
-
-        auction.currentPlayer =
-          null;
-
-        auction.highestBidder =
-          null;
-
-        auction.currentBid =
-          0;
-
-        auction.currentPlayerIndex =
-          auction.playerPool.length;
-
-        auction.completedAt =
-          new Date();
-
-        auction.bids =
-          [];
-
-        await auction.save();
-
-        res.json({
-          message:
-            "Auction completed successfully.",
-
-          auction
-        });
-
-        await broadcastAuctionState(
-          req
+        return res.json(
+          result
         );
-
-        return;
       }
 
       /* =====================================================
@@ -1426,6 +1587,68 @@ router.post(
           message:
             error.message ||
             "Failed to load next player."
+        });
+    }
+  }
+);
+
+/* =========================================================
+   END AUCTION MANUALLY
+
+   POST /api/auction/end
+========================================================= */
+
+router.post(
+  "/end",
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const auction =
+        await Auction.findOne({
+          status: {
+            $in: [
+              "Live",
+              "Paused"
+            ]
+          }
+        });
+
+      if (!auction) {
+        return res
+          .status(
+            400
+          )
+          .json({
+            message:
+              "No live or paused auction found to end."
+          });
+      }
+
+      const result =
+        await executeAuctionCompletion(
+          auction,
+          req
+        );
+
+      res.json(
+        result
+      );
+    } catch (error) {
+      console.error(
+        "End auction error:",
+        error
+      );
+
+      res
+        .status(
+          500
+        )
+        .json({
+          message:
+            error.message ||
+            "Failed to end auction."
         });
     }
   }

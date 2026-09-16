@@ -468,9 +468,11 @@ function calculateRuleCompliance(
   squadCheck,
   bestXIPlayers,
   formationCheck,
-  submitted
+  submitted,
+  isActive = true
 ) {
   const valid =
+    isActive === true &&
     submitted === true &&
     squadCheck.valid &&
     bestXIPlayers.length ===
@@ -516,14 +518,11 @@ router.get(
       }
 
       // -----------------------------------------------------
-      // GET ACTIVE TEAMS
+      // GET TEAMS
       // -----------------------------------------------------
 
       const teams =
-        await Team.find({
-          isActive:
-            true
-        })
+        await Team.find()
           .select(
             "username purse club players bestXI isActive"
           )
@@ -550,7 +549,7 @@ router.get(
         return res.json({
           ready: false,
           message:
-            "No active teams found.",
+            "No teams found.",
           results: []
         });
       }
@@ -598,13 +597,17 @@ router.get(
                 bestXIPlayers
               );
 
+            const isTeamActive =
+              team.isActive !== false;
+
             const ruleCompliance =
               calculateRuleCompliance(
                 squadCheck,
                 bestXIPlayers,
                 formationCheck,
                 bestXI.submitted ===
-                  true
+                  true,
+                isTeamActive
               );
 
             const strength =
@@ -630,6 +633,13 @@ router.get(
                 formationCheck
               );
 
+            const ruleFailures = [
+              ...(isTeamActive
+                ? []
+                : ["Team was eliminated from competition"]),
+              ...squadCheck.failures
+            ];
+
             return {
               team,
 
@@ -644,6 +654,8 @@ router.get(
               formationCheck,
 
               ruleCompliance,
+
+              ruleFailures,
 
               strength,
 
@@ -793,6 +805,7 @@ router.get(
                   .counts,
 
               ruleFailures:
+                item.ruleFailures ||
                 item.squadCheck
                   .failures,
 
@@ -1062,10 +1075,7 @@ async function fetchResultsInternally() {
   }
 
   const teams =
-    await Team.find({
-      isActive:
-        true
-    })
+    await Team.find()
       .select(
         "username purse club players bestXI isActive"
       )
@@ -1124,13 +1134,17 @@ async function fetchResultsInternally() {
             bestXIPlayers
           );
 
+        const isTeamActive =
+          team.isActive !== false;
+
         const ruleCompliance =
           calculateRuleCompliance(
             squadCheck,
             bestXIPlayers,
             formationCheck,
             bestXI.submitted ===
-              true
+              true,
+            isTeamActive
           );
 
         const strength =
@@ -1156,6 +1170,13 @@ async function fetchResultsInternally() {
             formationCheck
           );
 
+        const ruleFailures = [
+          ...(isTeamActive
+            ? []
+            : ["Team was eliminated from competition"]),
+          ...squadCheck.failures
+        ];
+
         return {
           team,
           squad,
@@ -1164,6 +1185,7 @@ async function fetchResultsInternally() {
           squadCheck,
           formationCheck,
           ruleCompliance,
+          ruleFailures,
           strength,
           balance,
           rawValue,
@@ -1301,6 +1323,7 @@ async function fetchResultsInternally() {
               .counts,
 
           ruleFailures:
+            item.ruleFailures ||
             item.squadCheck
               .failures,
 
