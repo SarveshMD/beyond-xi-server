@@ -122,9 +122,10 @@ const io =
     server,
     {
       cors: {
-        origin:
-          "http://localhost:5173",
-
+        origin: [
+          "https://beyond-xi-client-production.up.railway.app",
+          "http://localhost:5173"
+        ],
         methods: [
           "GET",
           "POST"
